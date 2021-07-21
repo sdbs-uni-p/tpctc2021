@@ -1,0 +1,33 @@
+From 4b5a592851b11e76005a6c103a79fd417a6b8a7a Mon Sep 17 00:00:00 2001
+From: Michael Fruth <Michael.Fruth@uni-passau.de>
+Date: Thu, 27 May 2021 16:33:31 +0200
+Subject: [PATCH] Upgrade XML library
+
+When executing OLTPBench with YCSB against PostgreSQL, the used XML
+library throws a NullPointerException. This is fixed by increasing the
+XML library version from 2.3.0 to 2.3.1.
+
+This problem is just realted to Java Versions >= 9.
+
+---
+ ivy.xml | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ivy.xml b/ivy.xml
+index 4cdc582..674f923 100644
+--- a/ivy.xml
++++ b/ivy.xml
+@@ -51,8 +51,8 @@
+ 		<dependency org="javax.persistence" name="persistence-api" rev="1.0" force="true" conf="compile->compile(*),master(*);runtime->runtime(*)"/>
+ 		<dependency org="javax.activation" name="activation" rev="1.1.1"/>
+ 		<dependency org="javax.jdo" name="jdo2-api" rev="2.3-eb" force="true" conf="compile->compile(*),master(*);runtime->runtime(*)"/>
+-		<dependency org="javax.xml.bind" name="jaxb-api" rev="2.3.0" force="true" conf="compile->compile(*),master(*);runtime->runtime(*)"/>
++		<dependency org="javax.xml.bind" name="jaxb-api" rev="2.3.1" force="true" conf="compile->compile(*),master(*);runtime->runtime(*)"/>
+ 		<dependency org="com.sun.xml.bind" name="jaxb-core" rev="2.3.0" force="true" conf="compile->compile(*),master(*);runtime->runtime(*)"/>
+-		<dependency org="com.sun.xml.bind" name="jaxb-impl" rev="2.3.0" force="true" conf="compile->compile(*),master(*);runtime->runtime(*)"/>
++		<dependency org="com.sun.xml.bind" name="jaxb-impl" rev="2.3.1" force="true" conf="compile->compile(*),master(*);runtime->runtime(*)"/>
+ 	</dependencies>
+ </ivy-module>
+-- 
+2.32.0
+

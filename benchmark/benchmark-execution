@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Copyright 2021, Michael Fruth <michael.fruth@uni-passau.de>
+
+set -e
+
+script_dir=`dirname "$(readlink -f "$0")"`
+
+db=$1
+db_executable_dir_name=$2
+db_executable_dir="${script_dir}/bin/${db_executable_dir_name}"
+db_data_dir_name=$3
+db_data_dir="${script_dir}/db_data_dir/${db_data_dir_name}"
+oltpbench_dir_name=$4
+oltpbench_dir="${script_dir}/bin/${oltpbench_dir_name}"
+oltpbench_config_name=$5
+oltpbench_config="${script_dir}/oltpbench-configs/${oltpbench_config_name}"
+benchmark=$6
+output_name=$7
+
+output_dir="${script_dir}/../results/${output_name}"
+
+source execution-helper "$db" "$db_executable_dir" "$db_data_dir" "$output_dir" "$oltpbench_dir" "$benchmark" "$oltpbench_config"
+
+####################################
+# HotSpot JVM
+####################################
+hotspot_gclog_args="-Xlog:safepoint+stats:/tmp/gc.log"
+jvm="${script_dir}/bin/hotspotJVM"
+
+benchmark 1 $jvm "-Xmx8G -XX:+UseG1GC $hotspot_gclog_args" "G1" 
+benchmark 1 $jvm "-Xmx8G -XX:+UseZGC $hotspot_gclog_args" "Z"
+benchmark 1 $jvm "-Xmx8G -XX:+UseShenandoahGC $hotspot_gclog_args" "Shenandoah"
+benchmark 1 $jvm "-Xmx180G -Xms160G -XX:+AlwaysPreTouch -XX:+UnlockExperimentalVMOptions -XX:+UseEpsilonGC $hotspot_gclog_args" "Epsilon"
+
+####################################
+# OpenJ9 JVM
+####################################
+j9_gclog_args="-Xlog:gc:/tmp/gc.log"
+jvm="${script_dir}/bin/openj9JVM"
+
+benchmark 1 $jvm "-Xmx8G -Xgcpolicy:gencon $j9_gclog_args" "gencon"
+benchmark 1 $jvm "-Xmx8G -Xgcpolicy:metronome $j9_gclog_args" "metronome"
+
+####################################
+# Finalize
+####################################
+finish

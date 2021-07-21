@@ -1,0 +1,41 @@
+From eb5afd759d945fcf6269ba4f79131cecdee65576 Mon Sep 17 00:00:00 2001
+From: Michael Fruth <Michael.Fruth@uni-passau.de>
+Date: Tue, 25 May 2021 21:17:48 +0200
+Subject: [PATCH] Transform semicolon into comment.
+
+A query that consists of only one semiclon (';') will be treated the
+same as a comment ('--'). Otherwhise, MariaDB send the error
+ER_EMPTY_QUERY (error code 1065) back to the client when it encounters a
+query consisting of only a single semicolon (';'). 
+
+---
+ sql/sql_parse.cc | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/sql/sql_parse.cc b/sql/sql_parse.cc
+index 119c7360f07..d406864ac0b 100644
+--- a/sql/sql_parse.cc
++++ b/sql/sql_parse.cc
+@@ -1205,6 +1205,7 @@ dispatch_command_return do_command(THD *thd, bool blocking)
+   NET *net= &thd->net;
+   enum enum_server_command command;
+   DBUG_ENTER("do_command");
++  char dummy[3] = {'-', '-', 0};
+ 
+   DBUG_ASSERT(!thd->async_state.pending_ops());
+   if (thd->async_state.m_state == thd_async_state::enum_async_state::RESUMED)
+@@ -1396,7 +1397,10 @@ dispatch_command_return do_command(THD *thd, bool blocking)
+   DBUG_ASSERT(!thd->apc_target.is_enabled());
+ 
+ resume:
+-  return_value= dispatch_command(command, thd, packet+1,
++  if (*(packet+1) == ';')
++    return_value= dispatch_command(command, thd, dummy, 2, blocking);
++  else
++    return_value= dispatch_command(command, thd, packet+1,
+                                  (uint) (packet_length-1), blocking);
+   if (return_value == DISPATCH_COMMAND_WOULDBLOCK)
+   {
+-- 
+2.32.0
+

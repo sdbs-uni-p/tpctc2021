@@ -1,0 +1,72 @@
+From 79e24a2b0675d3bef063ee93647ef304492a3297 Mon Sep 17 00:00:00 2001
+From: Michael Fruth <Michael.Fruth@uni-passau.de>
+Date: Thu, 15 Jul 2021 09:22:06 +0200
+Subject: [PATCH] Fix NoOp and disable commit
+
+The method executeQuery() is designed for SELECT-queries that
+(potentially) return a result. The NoOp-query, e.g., a single 
+semicolon (';') does not return anything at all, so an exception is
+thrown, whereby the execution ran accordingly thourgh the exception
+path. 
+
+For a proper execution, execute() is used which does not require a
+result. To ensure that the execution does not run through the exception
+path, OLTPBench is exited once a NoOp-query throws an exception.
+
+PostgreSQL does not perform the commit with the NoOp benchmark (since no
+data is changed at all) even if conn.commit() is executed, but MariaDB does.
+To ensure the same behaviour, the direct execution of commit is disabled.
+
+MariaDB will throw an exception as a single semicolon (';') results in the
+error code ER_EMPTY_QUERY, why MariaDB still needs to be patched.
+
+After this patch, (1) the NoOp benchmark is executed proberly and (2)
+PostgreSQL and MariaDB (patched version) will have the same behaviour.
+
+---
+ .../oltpbenchmark/benchmarks/noop/NoOpWorker.java  |  2 +-
+ .../benchmarks/noop/procedures/NoOp.java           | 14 +++++++++-----
+ 2 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/src/com/oltpbenchmark/benchmarks/noop/NoOpWorker.java b/src/com/oltpbenchmark/benchmarks/noop/NoOpWorker.java
+index e884a7a9..7b2fc426 100644
+--- a/src/com/oltpbenchmark/benchmarks/noop/NoOpWorker.java
++++ b/src/com/oltpbenchmark/benchmarks/noop/NoOpWorker.java
+@@ -46,7 +46,7 @@ public class NoOpWorker extends Worker<NoOpBenchmark> {
+         LOG.debug("Executing " + this.procNoOp);
+         try {
+             this.procNoOp.run(this.conn);
+-            this.conn.commit();
++            // this.conn.commit();
+             if (LOG.isDebugEnabled())
+                 LOG.debug("Successfully completed " + this.procNoOp + " execution!");
+         } catch (Exception ex) {
+diff --git a/src/com/oltpbenchmark/benchmarks/noop/procedures/NoOp.java b/src/com/oltpbenchmark/benchmarks/noop/procedures/NoOp.java
+index 599e0974..03d5fd7c 100644
+--- a/src/com/oltpbenchmark/benchmarks/noop/procedures/NoOp.java
++++ b/src/com/oltpbenchmark/benchmarks/noop/procedures/NoOp.java
+@@ -50,12 +50,16 @@ public class NoOp extends Procedure {
+         // exception here and check whether it is actually working
+         // correctly.
+         try {
+-            ResultSet r = stmt.executeQuery();
+-            while (r.next()) {
+-                // Do nothing
+-            } // WHILE
+-            r.close();
++            if (stmt.execute()) {
++				ResultSet r = stmt.getResultSet();
++				while (r.next()) {
++					// Do nothing
++				} // WHILE
++				r.close();
++			}
+         } catch (Exception ex) {
++            ex.printStackTrace();
++            System.exit(1);
+             // This error should be something like "No results were returned by the query."
+             if (LOG.isDebugEnabled()) {
+                 LOG.debug("Exception for NoOp query. This may be expected!", ex);
+-- 
+2.32.0
+

@@ -1,0 +1,180 @@
+#! /usr/bin/env bash
+set -e
+
+# Copyright 2021, Michael Fruth <michael.fruth@uni-passau.de>
+# SPDX-License-Identifier: GPL-2.0-only
+
+export LANG="C"
+export LC_ALL="C"
+
+# Will be set by the using scripts
+script_dir=`dirname "$(readlink -f "$0")"`
+
+db=`echo $1 | tr "[:upper:]" "[:lower:]"` # E.g. MariaDB or Postgres
+db_executable_dir=$2 # E.g. mysqld or postgres
+db_data_dir=$3
+output_dir=$4
+oltpbench_dir=$5
+benchmark=$6
+oltpbench_config=$7
+
+taskset_db="taskset -c 2-22:2"
+taskset_oltpbench="taskset -c 24-44:2"
+
+tmp_db_data_dir="/tmp/db-data-dir"
+
+if [ -d "$output_dir" ]; then
+    echo "'$output_dir' already exists. Please delete this directory."
+    exit 1
+fi
+if [ -d "$tmp_db_data_dir" ]; then
+    echo "'$tmp_db_data_dir' already exists. Please delete this directory."
+    exit 1
+fi
+
+tmp_output_dir=`mktemp -d`
+echo "Temporary output directory: '$tmp_output_dir'"
+
+log=`mktemp`
+db_log=`mktemp`
+
+echo "Log file: '$log'"
+echo "Database log file: '$db_log'"
+
+mkdir "$output_dir"
+mkdir "$output_dir/results"
+
+start_db () {
+    
+    #echo "Clearing caches..." >> $log
+    #free -h >> $log
+    #sudo sync && sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"
+    #echo "Caches cleared." >> $log
+    #free -h >> $log
+
+    [[ -d $tmp_db_data_dir ]] && echo "Database data directory '$tmp_db_data_dir' already exists" && exit 1
+    echo "Copying '$db_data_dir' into '$tmp_db_data_dir'" | tee -a $log
+    cp -r $db_data_dir $tmp_db_data_dir
+
+    echo "Starting database '$db'" | tee -a $log
+    if [ "$db" = "postgres" ]; then
+        echo "$taskset_db ${db_executable_dir}/bin/postgres -D ${tmp_db_data_dir} &>> $db_log &" >> $log
+        eval $taskset_db "${db_executable_dir}/bin/postgres" -D "${tmp_db_data_dir}" &>> $db_log &
+    elif [ "$db" = "mariadb" ]; then
+        echo "$taskset_db ${db_executable_dir}/bin/mysqld --no-defaults --datadir=${tmp_db_data_dir} --skip-grant-tables &>> $db_log &" >> $log
+        eval $taskset_db "${db_executable_dir}/bin/mysqld" --no-defaults --datadir="${tmp_db_data_dir}" --skip-grant-tables &>> $db_log &
+    else
+        echo "Unrecognized database '$db'" && exit 1
+    fi
+    
+    # Wait for DB to start
+    sleep 3
+}
+
+stop_db () {
+    echo "Shutting down database '$db'" | tee -a $log
+    
+    if [ "$db" = "postgres" ]; then
+        killall postgres
+    elif [ "$db" = "mariadb" ]; then
+        killall mysqld
+    fi
+    
+    # Wait for DB to shutdown
+    sleep 3
+    rm -rf "${tmp_db_data_dir}"
+} 
+
+benchmark () {
+    rounds=$1
+    jvm=$2
+    jvm_arg=$3
+    oltpbench_output_suffix=$4
+
+    echo "JVM: '$jvm' | '$jvm_arg'" | tee -a $log
+   
+    # Set Java 
+    JAVA_HOME="${jvm}"
+    export JAVA_HOME=$JAVA_HOME
+    export PATH=$JAVA_HOME/bin:$PATH
+    
+    java --version &>> $log 
+     
+    rm -f /tmp/gc.log
+    test=2
+    for round in `seq 1 $rounds`; do
+        echo "Round $round" | tee -a $log
+        
+        # Start DB 
+        start_db
+        
+        # Execute benchmark
+        jvm_name=`basename $jvm`
+        if [[ "$jvm_name" == *JVM ]]; then
+            jvm_name=${jvm_name: : -3}
+        fi
+        oltpbench_output="openjdk16-${jvm_name}_${oltpbench_output_suffix}_${round}"
+        
+        # Change directory temporarly just for the OLTPBench execution
+        (
+            cd "$oltpbench_dir"
+    
+            echo "Start benchmark" | tee -a $log
+            echo "$taskset_oltpbench java $jvm_arg -cp `./classpath.sh bin` -Dlog4j.configuration=log4j.properties com.oltpbenchmark.DBWorkload -b $benchmark -c $oltpbench_config --execute=true -o $oltpbench_output" &>> $log
+            eval $taskset_oltpbench java $jvm_arg -cp `./classpath.sh bin` -Dlog4j.configuration=log4j.properties com.oltpbenchmark.DBWorkload -b $benchmark -c "${oltpbench_config}" --execute=true -o $oltpbench_output 2>&1 | tee -a $log
+
+        # Safe data 
+            mv results/* "$tmp_output_dir"
+        )
+        mv /tmp/gc.log "${tmp_output_dir}/${oltpbench_output}.gc.log"
+
+        # Shutdown DB
+        stop_db
+
+
+        echo "Done rounde '$round'" | tee -a $log
+        echo "" >> $log
+    done
+}
+
+finish () {
+    echo "------------" >> $log
+    echo "" >> $log
+    echo "" >> $log
+
+    echo "Database executable directory: '$db_executable_dir'" >> $log
+    echo "" >> $log
+
+    echo "Database: '$db'" >> $log
+    echo "" >> $log
+
+    echo "Benchmark: '$benchmark'" >> $log
+    echo "" >> $log
+ 
+    echo "OLTPBench directory: '$oltpbench_dir'" >> $log
+    echo "" >> $log
+ 
+    echo "OLTPBench Configuration: '$oltpbench_config'" >> $log
+    echo "" >> $log
+
+  
+    echo "DB taskset: '$taskset_db'" >> $log
+    echo "" >> $log
+
+    echo "OLTPBench taskset: '$taskset_oltpbench'" >> $log
+    echo "" >> $log
+
+    echo "Kernel:" >> $log
+    uname -r >> $log
+    echo "" >> $log
+
+    echo "Numa Nodes:" >> $log
+    lscpu | grep -e 'NUMA node[0-9]' >> $log
+    echo ""
+
+    mv "${tmp_output_dir}"/* "${output_dir}"/results
+    rm -rf $tmp_output_dir
+
+    mv $log $output_dir/log.log
+    mv $db_log $output_dir/db.log
+}
